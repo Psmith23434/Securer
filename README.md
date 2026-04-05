@@ -10,12 +10,12 @@ Your source .py
       │
       ▼
 ┌─────────────────────────────┐
-│   STAGE 1: Obfuscator       │  ← this repo
-│  [x] String encryption      │
-│  [ ] Name mangling          │  ← Step 2
-│  [ ] Control flow flatten   │  ← Step 3
-│  [ ] Opaque predicates      │  ← Step 4
-│  [ ] Dead code injection    │  ← Step 5
+│   STAGE 1: Obfuscator       │
+│  [x] Stage 1a: Strings      │  ← Step 1 ✓
+│  [x] Stage 1b: Names        │  ← Step 2 ✓
+│  [ ] Stage 1c: Flow flatten │  ← Step 3
+│  [ ] Stage 1d: Predicates   │  ← Step 4
+│  [ ] Stage 1e: Dead code    │  ← Step 5
 └─────────────┬───────────────┘
               │  mangled_source.py
               ▼
@@ -36,68 +36,74 @@ Your source .py
 ```bash
 pip install -r requirements.txt
 
-# Encrypt strings in a single file
-python -m securer.cli --input my_app.py --output dist/ --encrypt-strings
+# Run all tests
+pytest tests/ -v
+```
 
-# Full obfuscation pipeline (all stages, once built)
-python -m securer.cli --input my_app.py --output dist/ --all
+## Pipeline Usage
+
+```python
+from securer.string_encryptor import StringEncryptor
+from securer.name_mangler import NameMangler
+
+src = open('app.py').read()
+enc = StringEncryptor(seed=42)   # Stage 1a: encrypt strings
+mg  = NameMangler(seed=42)       # Stage 1b: mangle names
+
+tree = enc.transform(src)
+tree = mg.transform_tree(tree)   # accepts already-parsed AST
+open('app_obf.py', 'w').write(mg.unparse(tree))
+
+# Audit what got renamed
+mg.print_table()
 ```
 
 ## Stages
 
-### Stage 1a — String Encryption (this step)
+### Stage 1a — String Encryption ✓
 
-Every string literal is replaced with an encrypted byte blob and a unique
-per-string XOR lambda decryptor. Keys are randomised at each build, so
-two builds of the same source produce different encrypted bytes.
+Every string literal replaced with an XOR-encrypted byte blob + unique
+per-string lambda decryptor. Keys are random per build.
+
+**Before:** `error_msg = "Invalid license key"`  
+**After:** `_dec_a3f1(_key_a3f1, _dat_a3f1)`
+
+### Stage 1b — Name Mangling ✓
+
+All user-defined identifiers renamed to `_X{sha256_hash}` names.
+
+**Renamed:** functions, classes, variables, arguments, import aliases,
+for-loop targets, comprehension variables, exception aliases.
+
+**Preserved:** `__dunder__` names, Python builtins, bare import module
+names, names listed in `__all__`, `self`, `cls`, the entry point (`main`).
 
 **Before:**
 ```python
-error_msg = "Invalid license key"
-url = "https://api.example.com/validate"
+def compute_license_hash(key, secret):
+    return key + secret
 ```
-
 **After:**
 ```python
-_dec_a3f1 = lambda k, d: bytes(a ^ b for a, b in zip(d, (bytes([k]) * len(d)))).decode('utf-8', errors='replace')
-_key_a3f1 = 0x4F
-_dat_a3f1 = b'\x16\x1c\x09...'
-error_msg = _dec_a3f1(_key_a3f1, _dat_a3f1)
-
-_dec_b2e0 = lambda k, d: bytes(a ^ b for a, b in zip(d, (bytes([k]) * len(d)))).decode('utf-8', errors='replace')
-_key_b2e0 = 0x71
-_dat_b2e0 = b'\x39\x15\x06...'
-url = _dec_b2e0(_key_b2e0, _dat_b2e0)
+def _Xa3f1(_Xb2e0, _Xc1d3):
+    return _Xb2e0 + _Xc1d3
 ```
-
-Each string gets its own decryptor name so static grep/search across the
-binary finds nothing useful. The key is embedded as a hex literal, not a
-named constant, making pattern matching harder.
-
-### Stage 1b — Name Mangling (Step 2)
-
-All variable, function, class, and argument names replaced with `_Ξ{hash}`
-identifiers that are valid Python but meaningless to a human reader.
 
 ### Stage 1c — Control Flow Flattening (Step 3)
 
 Function bodies rewritten as `while True` / state-machine dispatchers.
-Most effective technique against Ghidra/IDA decompilation.
 
 ### Stage 1d — Opaque Predicates (Step 4)
 
-Always-true/always-false branches inserted throughout to confuse static
-analysis and waste reverse engineer time.
+Always-true/always-false branches inserted to confuse static analysis.
 
 ### Stage 1e — Dead Code Injection (Step 5)
 
-Realistic-looking but never-executed code paths injected throughout.
+Realistic-looking but never-executed paths injected throughout.
 
 ### Stage 3 — Runtime Shield (Step 6)
 
-- `IsDebuggerPresent()` check on Windows (silent exit)
-- SHA-256 integrity check against baked-in binary hash
-- Anti-VM heuristics (optional)
+`IsDebuggerPresent()` check + SHA-256 binary integrity verification.
 
 ## Project Structure
 
@@ -105,15 +111,15 @@ Realistic-looking but never-executed code paths injected throughout.
 Securer/
 ├── securer/
 │   ├── __init__.py
-│   ├── cli.py                  # entry point
 │   ├── string_encryptor.py     # Stage 1a ✓
-│   ├── name_mangler.py         # Stage 1b (Step 2)
-│   ├── flow_flattener.py       # Stage 1c (Step 3)
-│   ├── opaque_predicates.py    # Stage 1d (Step 4)
-│   ├── dead_code_injector.py   # Stage 1e (Step 5)
-│   └── runtime_shield.py       # Stage 3  (Step 6)
+│   ├── name_mangler.py         # Stage 1b ✓
+│   ├── flow_flattener.py       # Step 3
+│   ├── opaque_predicates.py    # Step 4
+│   ├── dead_code_injector.py   # Step 5
+│   └── runtime_shield.py       # Step 6
 ├── tests/
 │   ├── test_string_encryptor.py
+│   ├── test_name_mangler.py
 │   └── fixtures/
 │       └── sample_app.py
 ├── README.md
@@ -124,9 +130,9 @@ Securer/
 ## Requirements
 
 - Python 3.10+
-- No external dependencies for the core pipeline (uses stdlib `ast` only)
+- No external dependencies for the core pipeline (stdlib `ast` + `hashlib` only)
 - `pytest` for tests
-- `nuitka` + MSVC Build Tools for final compilation step
+- `nuitka` + MSVC Build Tools for final compilation
 
 ## License
 
