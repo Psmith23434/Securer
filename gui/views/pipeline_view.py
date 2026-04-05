@@ -8,6 +8,11 @@ Layout (top-to-bottom):
   - Options row: seed entry + output dir
   - Run button (full width)
   - LogPanel (fills remaining space)
+
+Post-run:
+  After a successful obfuscation run a CTkToplevel dialog asks the user
+  whether to compile the _obf.py with Nuitka.  If accepted, NuitkaRunner
+  streams the build log into the same LogPanel.
 """
 from __future__ import annotations
 
@@ -15,11 +20,15 @@ import threading
 from pathlib import Path
 from tkinter import filedialog
 from typing import Optional
+import os
+import subprocess
+import sys
 
 import customtkinter as ctk
 
 from gui.components.log_panel import LogPanel, LogLevel
 from gui.components.toast import ToastManager
+from securer.nuitka_runner import NuitkaRunner, NuitkaError
 
 
 STAGE_META = [
@@ -30,6 +39,138 @@ STAGE_META = [
     ("1e_deadcode",   "1e", "Dead Code Injection",   "Inject realistic but unreachable code"),
     ("3_shield",      " 3", "Runtime Shield",        "Anti-debug + binary integrity check"),
 ]
+
+
+class _CompileDialog(ctk.CTkToplevel):
+    """
+    Modal dialog shown after a successful obfuscation run.
+
+    Asks: "Compile <name>_obf.py to a native .exe with Nuitka?"
+    Returns via ``result`` attribute: True = compile, False = skip.
+    """
+
+    def __init__(self, parent: ctk.CTk, obf_path: Path) -> None:
+        super().__init__(parent)
+        self.title("Compile with Nuitka?")
+        self.resizable(False, False)
+        self.grab_set()          # modal
+        self.result: bool = False
+        self._obf_path = obf_path
+
+        # --- layout ---
+        self.grid_columnconfigure(0, weight=1)
+
+        # Icon + heading
+        ctk.CTkLabel(
+            self,
+            text="\u26a1  Compile to .exe?",
+            font=("Segoe UI", 16, "bold"),
+        ).grid(row=0, column=0, columnspan=2, padx=24, pady=(22, 6), sticky="w")
+
+        # Description
+        ctk.CTkLabel(
+            self,
+            text=(
+                f"Obfuscated file written:\n"
+                f"  {obf_path.name}\n\n"
+                "Compile it to a standalone native .exe\n"
+                "using Nuitka? This may take a few minutes."
+            ),
+            font=("Segoe UI", 12),
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, columnspan=2, padx=24, pady=(0, 6), sticky="w")
+
+        # Options
+        self._onefile_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            self,
+            text="Single-file executable (--onefile)",
+            variable=self._onefile_var,
+            font=("Segoe UI", 12),
+        ).grid(row=2, column=0, columnspan=2, padx=24, pady=(0, 4), sticky="w")
+
+        self._noconsole_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            self,
+            text="Hide console window (--windows-disable-console)",
+            variable=self._noconsole_var,
+            font=("Segoe UI", 12),
+        ).grid(row=3, column=0, columnspan=2, padx=24, pady=(0, 16), sticky="w")
+
+        # Output dir row
+        out_frame = ctk.CTkFrame(self, fg_color="transparent")
+        out_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=24, pady=(0, 16))
+        out_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            out_frame,
+            text="Output dir",
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+
+        self._out_entry = ctk.CTkEntry(
+            out_frame,
+            placeholder_text="Same as .py file (default)",
+            height=34,
+            font=("Segoe UI", 12),
+        )
+        self._out_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+
+        ctk.CTkButton(
+            out_frame,
+            text="\u2026",
+            width=34,
+            height=34,
+            font=("Segoe UI", 14),
+            command=self._browse_out,
+        ).grid(row=0, column=2)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.grid(row=5, column=0, columnspan=2, sticky="ew", padx=24, pady=(0, 20))
+        btn_frame.grid_columnconfigure(0, weight=1)
+        btn_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Skip",
+            fg_color="transparent",
+            border_width=1,
+            text_color=("#333333", "#cccccc"),
+            font=("Segoe UI", 13),
+            command=self._skip,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="\u26a1  Compile",
+            font=("Segoe UI", 13, "bold"),
+            command=self._compile,
+        ).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+        # Centre on parent
+        self.update_idletasks()
+        px = parent.winfo_x() + (parent.winfo_width()  - self.winfo_width())  // 2
+        py = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{px}+{py}")
+
+    def _browse_out(self) -> None:
+        path = filedialog.askdirectory(title="Select Nuitka output directory")
+        if path:
+            self._out_entry.delete(0, "end")
+            self._out_entry.insert(0, path)
+
+    def _skip(self) -> None:
+        self.result = False
+        self.destroy()
+
+    def _compile(self) -> None:
+        self.result = True
+        self._chosen_out = self._out_entry.get().strip()
+        self._chosen_onefile = self._onefile_var.get()
+        self._chosen_noconsole = self._noconsole_var.get()
+        self.destroy()
 
 
 class PipelineView(ctk.CTkFrame):
@@ -56,19 +197,11 @@ class PipelineView(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(5, weight=1)   # log panel expands
 
-        # --- Header ---
         self._build_header(row=0)
-
-        # --- File input ---
         self._build_file_row(row=1)
-
-        # --- Stage toggles ---
         self._build_stage_toggles(row=2)
-
-        # --- Options (seed + output dir) ---
         self._build_options_row(row=3)
 
-        # --- Run button ---
         self._run_btn = ctk.CTkButton(
             self,
             text="\u25b6  Run Pipeline",
@@ -78,7 +211,6 @@ class PipelineView(ctk.CTkFrame):
         )
         self._run_btn.grid(row=4, column=0, sticky="ew", padx=20, pady=(8, 6))
 
-        # --- Log panel ---
         self._log = LogPanel(self)
         self._log.grid(row=5, column=0, sticky="nsew", padx=20, pady=(0, 16))
 
@@ -144,7 +276,6 @@ class PipelineView(ctk.CTkFrame):
             anchor="w",
         ).grid(row=0, column=0, columnspan=6, sticky="w", padx=14, pady=(10, 6))
 
-        # 6 toggle cards in a single row
         for col, (key, badge, name, tip) in enumerate(STAGE_META):
             outer.grid_columnconfigure(col, weight=1)
             card = ctk.CTkFrame(
@@ -154,7 +285,6 @@ class PipelineView(ctk.CTkFrame):
             )
             card.grid(row=1, column=col, sticky="ew", padx=6, pady=(0, 10))
 
-            # Badge
             ctk.CTkLabel(
                 card,
                 text=badge,
@@ -163,7 +293,6 @@ class PipelineView(ctk.CTkFrame):
                 anchor="w",
             ).grid(row=0, column=0, sticky="w", padx=(10, 0), pady=(8, 0))
 
-            # Name
             ctk.CTkLabel(
                 card,
                 text=name,
@@ -172,7 +301,6 @@ class PipelineView(ctk.CTkFrame):
                 wraplength=120,
             ).grid(row=1, column=0, sticky="w", padx=10)
 
-            # Tip
             ctk.CTkLabel(
                 card,
                 text=tip,
@@ -182,7 +310,6 @@ class PipelineView(ctk.CTkFrame):
                 wraplength=120,
             ).grid(row=2, column=0, sticky="w", padx=10, pady=(2, 8))
 
-            # Toggle
             var = ctk.BooleanVar(value=self._state["stages"][key])
             self._toggle_vars[key] = var
             switch = ctk.CTkSwitch(
@@ -200,7 +327,6 @@ class PipelineView(ctk.CTkFrame):
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(3, weight=2)
 
-        # Seed
         ctk.CTkLabel(frame, text="Seed", font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, sticky="w", padx=(0, 8)
         )
@@ -208,7 +334,6 @@ class PipelineView(ctk.CTkFrame):
         self._seed_entry.insert(0, str(self._state.get("seed", 42)))
         self._seed_entry.grid(row=0, column=1, sticky="w", padx=(0, 20))
 
-        # Output dir
         ctk.CTkLabel(frame, text="Output dir", font=("Segoe UI", 12, "bold")).grid(
             row=0, column=2, sticky="w", padx=(0, 8)
         )
@@ -285,7 +410,7 @@ class PipelineView(ctk.CTkFrame):
         thread.start()
 
     # ------------------------------------------------------------------
-    # Pipeline execution (runs in background thread)
+    # Pipeline execution (background thread)
     # ------------------------------------------------------------------
 
     def _run_pipeline(self, input_path: str) -> None:
@@ -350,7 +475,7 @@ class PipelineView(ctk.CTkFrame):
                     import ast
                     tree = ast.parse(src)
                 tree = op.transform_tree(tree)
-                log.log(f"  Injected predicates", LogLevel.SUCCESS)
+                log.log("  Injected predicates", LogLevel.SUCCESS)
                 last_module = op
             else:
                 log.log("Stage 1d — skipped", LogLevel.INFO)
@@ -394,9 +519,9 @@ class PipelineView(ctk.CTkFrame):
 
             # Write output
             in_path = Path(input_path)
-            out_dir = state.get("output_dir", "").strip()
-            if out_dir:
-                out_path = Path(out_dir) / (in_path.stem + "_obf.py")
+            out_dir_str = state.get("output_dir", "").strip()
+            if out_dir_str:
+                out_path = Path(out_dir_str) / (in_path.stem + "_obf.py")
             else:
                 out_path = in_path.parent / (in_path.stem + "_obf.py")
 
@@ -410,7 +535,11 @@ class PipelineView(ctk.CTkFrame):
                 f"Output: {out_lines} lines ({ratio:.1f}x expansion)",
                 LogLevel.SUCCESS,
             )
-            self.after(0, lambda: self._toast.show("Pipeline complete!", kind="success"))
+
+            # ────────────────────────────────────────────────────────────
+            # Prompt user for Nuitka compilation (runs on the main thread)
+            # ────────────────────────────────────────────────────────────
+            self.after(0, lambda p=out_path: self._prompt_nuitka(p))
 
         except Exception as exc:  # noqa: BLE001
             log.log(f"ERROR: {exc}", LogLevel.ERROR)
@@ -424,3 +553,124 @@ class PipelineView(ctk.CTkFrame):
                 ),
             )
             self._running = False
+
+    # ------------------------------------------------------------------
+    # Nuitka compile prompt + execution
+    # ------------------------------------------------------------------
+
+    def _prompt_nuitka(self, obf_path: Path) -> None:
+        """Show the compile dialog on the main thread, then act on the result."""
+        root = self.winfo_toplevel()
+        dlg = _CompileDialog(root, obf_path)
+        root.wait_window(dlg)
+
+        if not dlg.result:
+            self._toast.show("Obfuscation complete. Skipped Nuitka.", kind="success")
+            return
+
+        # Determine output directory for Nuitka
+        chosen_out = getattr(dlg, "_chosen_out", "").strip()
+        if not chosen_out:
+            chosen_out = str(obf_path.parent / "dist")
+        onefile    = getattr(dlg, "_chosen_onefile",   True)
+        noconsole  = getattr(dlg, "_chosen_noconsole",  False)
+
+        self._toast.show("Starting Nuitka compilation...", kind="info")
+        self._log.log("", LogLevel.INFO)
+        self._log.log("=" * 60, LogLevel.INFO)
+        self._log.log("STAGE 2 — Nuitka Compilation", LogLevel.INFO)
+        self._log.log("=" * 60, LogLevel.INFO)
+
+        thread = threading.Thread(
+            target=self._run_nuitka,
+            args=(obf_path, chosen_out, onefile, noconsole),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_nuitka(self, obf_path: Path, out_dir: str, onefile: bool, noconsole: bool) -> None:
+        """Run Nuitka in a background thread, streaming output into the log panel."""
+        log = self._log
+
+        def _log_line(line: str) -> None:
+            log.log(line, LogLevel.INFO)
+
+        try:
+            runner = NuitkaRunner(log_callback=_log_line)
+            runner.check_available()
+            exe_path = runner.compile(
+                source_path=obf_path,
+                output_dir=out_dir,
+                onefile=onefile,
+                windows_disable_console=noconsole,
+            )
+            self.after(0, lambda: self._on_nuitka_success(exe_path))
+
+        except NuitkaError as exc:
+            log.log(f"Nuitka error: {exc}", LogLevel.ERROR)
+            self.after(0, lambda: self._toast.show("Nuitka failed — see log.", kind="error"))
+
+        except Exception as exc:  # noqa: BLE001
+            log.log(f"Unexpected error: {exc}", LogLevel.ERROR)
+            self.after(0, lambda: self._toast.show(f"Error: {exc}", kind="error"))
+
+    def _on_nuitka_success(self, exe_path: Path) -> None:
+        """Called on main thread after a successful Nuitka build."""
+        self._log.log(f"\u2714 Binary ready: {exe_path}", LogLevel.SUCCESS)
+        self._toast.show("Compiled successfully!", kind="success")
+        self._state["last_exe"] = str(exe_path)
+
+        # Offer to open the containing folder
+        root = self.winfo_toplevel()
+        dlg = ctk.CTkToplevel(root)
+        dlg.title("Build Complete")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            dlg,
+            text="\u2714  Build complete!",
+            font=("Segoe UI", 16, "bold"),
+        ).grid(row=0, column=0, columnspan=2, padx=24, pady=(20, 6), sticky="w")
+
+        ctk.CTkLabel(
+            dlg,
+            text=str(exe_path),
+            font=("Consolas", 11),
+            text_color=("#444444", "#aaaaaa"),
+            wraplength=380,
+            anchor="w",
+        ).grid(row=1, column=0, columnspan=2, padx=24, pady=(0, 16), sticky="w")
+
+        btn_frame = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=24, pady=(0, 20))
+        btn_frame.grid_columnconfigure(0, weight=1)
+        btn_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Open Folder",
+            fg_color="transparent",
+            border_width=1,
+            text_color=("#333333", "#cccccc"),
+            font=("Segoe UI", 13),
+            command=lambda: (
+                os.startfile(str(exe_path.parent))
+                if sys.platform == "win32"
+                else subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(exe_path.parent)]),
+                dlg.destroy(),
+            ),
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Close",
+            font=("Segoe UI", 13, "bold"),
+            command=dlg.destroy,
+        ).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+        dlg.update_idletasks()
+        px = root.winfo_x() + (root.winfo_width()  - dlg.winfo_width())  // 2
+        py = root.winfo_y() + (root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{px}+{py}")
