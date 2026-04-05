@@ -8,11 +8,16 @@ Responsibilities:
   - Route sidebar nav events to view switches
 
 Drag-and-drop:
-  When tkinterdnd2 is installed, SecurerApp inherits from TkinterDnD.Tk
-  (in addition to ctk.CTk) so the DnD message loop is registered at the
-  Tk root level.  Falls back to plain ctk.CTk when the package is absent.
+  tkinterdnd2 cannot safely use multiple inheritance with ctk.CTk because
+  both subclass tk.Tk and the MRO breaks CTk's scaling init.
+  Instead we call TkinterDnD's internal _require() on the already-constructed
+  CTk instance — this is the same thing TkinterDnD.Tk.__init__ does, but
+  without touching the class hierarchy.
+  Falls back silently to plain ctk.CTk when tkinterdnd2 is absent.
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 import customtkinter as ctk
 
@@ -21,16 +26,6 @@ from gui.components.toast import ToastManager
 from gui.views.pipeline_view import PipelineView
 from gui.views.settings_view import SettingsView
 from gui.views.about_view import AboutView
-
-# ---------------------------------------------------------------------------
-# Optional TkinterDnD root mixin
-# ---------------------------------------------------------------------------
-try:
-    from tkinterdnd2 import TkinterDnD  # type: ignore
-    _DnDBase = TkinterDnD.Tk            # registers the DnD message loop
-except ImportError:
-    _DnDBase = None
-
 
 # ---------------------------------------------------------------------------
 # Default app state — shared across all views via reference
@@ -52,24 +47,7 @@ DEFAULT_STATE: dict = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Build the correct base class at import time
-# ---------------------------------------------------------------------------
-if _DnDBase is not None:
-    class _AppBase(_DnDBase, ctk.CTk):  # type: ignore[misc]
-        """Mixin: TkinterDnD.Tk (DnD loop) + ctk.CTk (theme/widgets)."""
-        def __init__(self) -> None:
-            # CTk sets up its internals via super(); TkinterDnD.Tk registers
-            # the DnD protocol on the same Tk instance.
-            super().__init__()
-else:
-    class _AppBase(ctk.CTk):  # type: ignore[misc]
-        """Fallback: plain CTk root (no drag-and-drop)."""
-        def __init__(self) -> None:
-            super().__init__()
-
-
-class SecurerApp(_AppBase):
+class SecurerApp(ctk.CTk):
     """Main application window."""
 
     WIDTH  = 1080
@@ -82,6 +60,20 @@ class SecurerApp(_AppBase):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         super().__init__()
+
+        # ----------------------------------------------------------------
+        # Patch tkinterdnd2 onto the live Tk instance.
+        # TkinterDnD.Tk.__init__ does exactly one thing beyond tk.Tk.__init__:
+        # it calls self.tk.call("package", "require", "tkdnd") via _require().
+        # We replicate that here, after CTk has finished its own __init__,
+        # so there is zero MRO conflict.
+        # ----------------------------------------------------------------
+        try:
+            import tkinterdnd2 as _dnd  # type: ignore
+            _dnd.TkinterDnD._require(self)  # registers DnD on this Tk root
+            self._dnd_enabled = True
+        except Exception:
+            self._dnd_enabled = False
 
         self.title("Securer")
         self.geometry(f"{self.WIDTH}x{self.HEIGHT}")
