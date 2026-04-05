@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Nuitka output
+*.dist/
+*.build/
+*.onefile-build/
+*.exe
+*.dll
+
+# Cython
+*.c
+*.html
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Obfuscator working files
+_obfuscated/
+_mangled/
+*.obf.py
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
