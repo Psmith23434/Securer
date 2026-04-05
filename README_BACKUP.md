@@ -20,7 +20,7 @@ Your source .py
               │  mangled_source.py
               ▼
 ┌─────────────────────────────┐
-│   STAGE 2: Nuitka           │  ← Step 8 (GUI integration)
+│   STAGE 2: Nuitka           │  external tool
 │   Python → C → .exe         │
 └─────────────┬───────────────┘
               │  app.exe
@@ -35,12 +35,6 @@ Your source .py
 
 ```bash
 pip install -r requirements.txt
-python main.py
-```
-
-## Run Tests
-
-```bash
 pytest tests/ -v
 ```
 
@@ -77,7 +71,7 @@ print(di.stats)
 # RuntimeShield.guard()
 ```
 
-## Completed Steps
+## Stages
 
 ### Stage 1a — String Encryption ✓
 
@@ -173,79 +167,32 @@ RuntimeShield.EXPECTED_HASH = "a3f1...de09"
 RuntimeShield.guard()   # call at top of main.py
 ```
 
-### Step 7 — GUI ✓
+## Step 7 — GUI (next)
 
-Full CustomTkinter desktop GUI — complete and functional.
+Build a full CustomTkinter desktop GUI for Securer:
 
-- **Sidebar navigation**: Pipeline, Settings, About — collapsible with animation
-- **Pipeline view**: file Browse input, 6 stage toggles (1a–1e + Shield),
-  seed + output dir options, Run button, live color-coded log panel
-- **Settings view**: default seed, output directory, dark/light/system theme
-- **About view**: version, architecture diagram, stage reference table
-- **Toast notifications**: non-blocking fade-out overlays for success/error/warning
+- **Sidebar navigation**: Pipeline, Settings, About
+- **Pipeline view**: drag-and-drop .py file input, toggle for each stage
+  (1a–1e + Shield), live log panel showing obfuscation progress, output
+  file path selector, Run button
+- **Settings view**: seed input, output directory, theme toggle (dark/light)
+- **About view**: version, pipeline summary, links
 
-Launch:
-```bash
-pip install -r requirements.txt
-python main.py
+Files to create:
+
 ```
-
----
-
-## Remaining Steps
-
-### Step 8 — Nuitka GUI Integration (next)
-
-After the obfuscation pipeline completes and writes `_obf.py`, prompt the user:
-
-> *"Compile `app_obf.py` to a native .exe with Nuitka?"*  `[ Compile ]`  `[ Skip ]`
-
-Implementation plan:
-- Create `securer/nuitka_runner.py` — subprocess wrapper that runs Nuitka,
-  streams stdout/stderr live into the existing log panel
-- Check Nuitka is installed; show install instructions toast if missing
-- On success: display output `.exe` path + offer "Open folder" button
-- Update `gui/views/pipeline_view.py` to show post-run compile dialog
-
-Files to create/update:
+gui/
+├── app.py                   ← CustomTkinter root window + theme init
+├── views/
+│   ├── pipeline_view.py     ← main obfuscation UI
+│   ├── settings_view.py     ← seed, output dir, theme
+│   └── about_view.py        ← version + info
+└── components/
+    ├── sidebar.py           ← animated collapsible sidebar
+    ├── log_panel.py         ← scrollable real-time log output
+    └── toast.py             ← non-blocking toast notifications
+main.py                      ← GUI entry point
 ```
-securer/nuitka_runner.py          ← NEW: Nuitka subprocess wrapper
-gui/views/pipeline_view.py        ← UPDATE: post-run compile prompt dialog
-```
-
-### Step 9 — Drag-and-Drop Input
-
-Replace the plain text entry in `pipeline_view.py` with a proper drag-and-drop
-drop zone that accepts `.py` files dragged from Windows Explorer.
-
-- Uses **TkinterDnD2** (`pip install tkinterdnd2`) — wraps the Tk DnD extension
-- Drop zone shows a dashed border and "Drop a .py file here" hint
-- Falls back gracefully to the Browse button if DnD is unavailable
-- Add `tkinterdnd2` to `requirements.txt`
-
-Files to update:
-```
-gui/views/pipeline_view.py        ← UPDATE: drop zone widget
-requirements.txt                  ← UPDATE: add tkinterdnd2
-```
-
-### Step 10 — Build Securer.exe (final)
-
-Compile the Securer app itself into a standalone distributable `.exe`.
-This is the final step — must be done after all features are complete.
-
-1. Compile `securer/` core modules to `.pyd` via Cython (`cython_build.py`)
-2. Package entire app with Nuitka (`build_securer.py`) — GUI + obfuscated core
-3. Embed `RuntimeShield` hash into the compiled binary
-4. Output: single `Securer.exe` — no Python installation required
-
-Files to update:
-```
-build/cython_build.py             ← UPDATE: finalize Cython compilation
-build/build_securer.py            ← UPDATE: finalize Nuitka packaging
-```
-
----
 
 ## Project Structure
 
@@ -258,9 +205,8 @@ Securer/
 │   ├── flow_flattener.py       # Stage 1c ✓
 │   ├── opaque_predicates.py    # Stage 1d ✓
 │   ├── dead_code_injector.py   # Stage 1e ✓
-│   ├── runtime_shield.py       # Stage 3  ✓
-│   └── nuitka_runner.py        # Stage 2 wrapper — Step 8
-├── gui/                        # Step 7 ✓
+│   └── runtime_shield.py       # Stage 3 ✓
+├── gui/                        # Step 7 — next
 │   ├── app.py
 │   ├── views/
 │   │   ├── pipeline_view.py
@@ -270,21 +216,20 @@ Securer/
 │       ├── sidebar.py
 │       ├── log_panel.py
 │       └── toast.py
-├── main.py
+├── main.py                     # Step 7 — GUI entry point
 ├── tests/
 │   ├── test_string_encryptor.py
 │   ├── test_name_mangler.py
 │   ├── test_flow_flattener.py
 │   ├── test_opaque_predicates.py
 │   ├── test_dead_code_injector.py
-│   ├── test_runtime_shield.py
+│   ├── test_runtime_shield.py  # ✓
 │   └── fixtures/
 │       └── sample_app.py
 ├── build/
-│   ├── build_securer.py        # Step 10 — Nuitka build of Securer.exe
-│   └── cython_build.py         # Step 10 — compile securer/ to .pyd
+│   ├── build_securer.py        # Nuitka build of Securer.exe
+│   └── cython_build.py         # compile securer/ to .pyd
 ├── README.md
-├── README_BACKUP.md            # backup of README before Steps 8–10
 ├── requirements.txt
 └── .gitignore
 ```
@@ -292,11 +237,10 @@ Securer/
 ## Requirements
 
 - Python 3.10+
-- `customtkinter>=5.2` for GUI
-- `tkinterdnd2` for drag-and-drop (Step 9)
+- No external dependencies for core pipeline (stdlib `ast`, `hashlib`, `random` only)
 - `pytest` for tests
-- `nuitka` + MSVC Build Tools for compilation (Steps 8 & 10)
-  - https://visualstudio.microsoft.com/visual-cpp-build-tools/
+- `customtkinter` for GUI (Step 7)
+- `nuitka` + MSVC Build Tools for final compilation
 
 ## License
 
