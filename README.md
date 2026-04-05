@@ -229,10 +229,13 @@ gui/views/pipeline_view.py        ← UPDATE: drop zone widget
 requirements.txt                  ← UPDATE: add tkinterdnd2
 ```
 
-### Step 10 — Build Securer.exe (final)
+### Step 10 — Build Securer.exe *(optional)*
+
+> **This step is optional.** Securer is fully functional as a Python app
+> (`python main.py`). Only follow this step if you want to distribute a
+> standalone `.exe` that requires no Python installation on the target machine.
 
 Compile the Securer app itself into a standalone distributable `.exe`.
-This is the final step — must be done after all features are complete.
 
 1. Compile `securer/` core modules to `.pyd` via Cython (`cython_build.py`)
 2. Package entire app with Nuitka (`build_securer.py`) — GUI + obfuscated core
@@ -281,8 +284,8 @@ Securer/
 │   └── fixtures/
 │       └── sample_app.py
 ├── build/
-│   ├── build_securer.py        # Step 10 — Nuitka build of Securer.exe
-│   └── cython_build.py         # Step 10 — compile securer/ to .pyd
+│   ├── build_securer.py        # Step 10 (optional) — Nuitka build of Securer.exe
+│   └── cython_build.py         # Step 10 (optional) — compile securer/ to .pyd
 ├── README.md
 ├── README_BACKUP.md            # backup of README before Steps 8–10
 ├── requirements.txt
@@ -295,7 +298,7 @@ Securer/
 - `customtkinter>=5.2` for GUI
 - `tkinterdnd2` for drag-and-drop (Step 9)
 - `pytest` for tests
-- `nuitka` + MSVC Build Tools for compilation (Steps 8 & 10)
+- `nuitka` + MSVC Build Tools for compilation (Steps 8 & 10, optional)
   - https://visualstudio.microsoft.com/visual-cpp-build-tools/
 
 ## License
