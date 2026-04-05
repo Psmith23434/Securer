@@ -11,7 +11,7 @@ Compilation mode:
                                runtime, which avoids antivirus heuristics and
                                temp-file clutter on the user's machine.
   standalone=False           — produces a single .exe (--onefile) that
-                               self-extracts to %APPDATA%\Local\Temp on every
+                               self-extracts to %APPDATA%\\Local\\Temp on every
                                launch.  Use only when you need a single file
                                and have verified your AV allows it.
 
@@ -116,7 +116,7 @@ class NuitkaRunner:
             If True (default), pass ``--standalone`` — produces a folder with
             no runtime temp extraction.  Recommended for distribution.
             If False, pass ``--onefile`` — single .exe but self-extracts to
-            %APPDATA%\Local\Temp on every launch (can trigger AV heuristics).
+            %APPDATA%\\Local\\Temp on every launch (can trigger AV heuristics).
         windows_disable_console:
             Pass ``--windows-disable-console`` to suppress the console window.
         tk_inter:
