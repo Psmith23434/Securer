@@ -1,5 +1,5 @@
-# Runtime — stdlib only (ast, hashlib, random, ctypes)
-# No third-party runtime dependencies.
+# GUI
+customtkinter>=5.2
 
 # Development / testing
 pytest>=8.0
