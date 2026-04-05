@@ -514,7 +514,7 @@ class PipelineView(ctk.CTkFrame):
                 if tree is None:
                     import ast; tree = ast.parse(src)
                 tree = mg.transform_tree(tree)
-                log.log(f"  Mangled {len(mg.mapping)} identifier(s)", LogLevel.SUCCESS)
+                log.log(f"  Mangled {len(mg.symbol_table)} identifier(s)", LogLevel.SUCCESS)
                 last_module = mg
             else:
                 log.log("Stage 1b \u2014 skipped", LogLevel.INFO)
@@ -596,7 +596,6 @@ class PipelineView(ctk.CTkFrame):
             import traceback
             tb = traceback.format_exc()
             log.log(tb, LogLevel.ERROR)
-            # Capture exc into default arg to avoid Python's except-scope cleanup
             self.after(0, lambda e=exc: self._toast.show(f"Error: {e}", kind="error"))
 
         finally:
@@ -649,7 +648,6 @@ class PipelineView(ctk.CTkFrame):
             self.after(0, lambda: self._on_nuitka_success(exe_path))
         except NuitkaError as exc:
             log.log(f"Nuitka error: {exc}", LogLevel.ERROR)
-            # Capture exc into default arg to avoid Python's except-scope cleanup
             self.after(0, lambda e=exc: self._toast.show(f"Nuitka failed: {e}", kind="error"))
         except Exception as exc:  # noqa: BLE001
             log.log(f"Unexpected error: {exc}", LogLevel.ERROR)
