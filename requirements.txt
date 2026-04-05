@@ -1,5 +1,6 @@
 # GUI
 customtkinter>=5.2
+tkinterdnd2>=0.3.0
 
 # Development / testing
 pytest>=8.0
