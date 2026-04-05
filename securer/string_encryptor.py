@@ -2,23 +2,20 @@
 Stage 1a — String Encryption
 ============================
 Transforms every string literal in a Python AST into an encrypted byte blob
-with a unique per-string XOR decryptor lambda.
+decrypted at runtime via a shared XOR lambda.
 
 Design goals:
   - Each string gets a unique random key (0x01–0xFE) so identical strings
     produce different ciphertext across the file.
   - Each decryptor lambda has a unique generated name so no single grep
     pattern finds all of them.
+  - ALL helper assignments (_dec_, _key_, _dat_) are hoisted to MODULE LEVEL
+    as a preamble block.  This avoids injecting closures inside function
+    bodies, which caused Nuitka's zig C backend to segfault when compiling
+    functions with many nested lambdas.
   - The transformation is purely AST-based — no regex, no text munging.
-    This means it handles multi-line strings, bytes literals (skipped),
-    and docstrings correctly.
-  - F-strings (JoinedStr nodes) are skipped entirely: their Constant
-    sub-nodes are literal fragments mixed with arbitrary expressions and
-    cannot be replaced with Call nodes without producing invalid AST.
-    The runtime value of an f-string is never a plain string constant
-    anyway, so skipping costs nothing meaningful in obfuscation coverage.
-  - Docstrings on modules, classes, and functions are preserved as-is
-    (they are safe to leave; removing them breaks help() and __doc__).
+  - F-strings (JoinedStr nodes) are skipped entirely.
+  - Docstrings on modules, classes, and functions are preserved as-is.
     Pass preserve_docstrings=False to encrypt those too.
   - The output is valid Python that can be parsed, imported, and compiled
     by Nuitka without modification.
@@ -26,7 +23,7 @@ Design goals:
 Usage:
     from securer.string_encryptor import StringEncryptor
 
-    enc = StringEncryptor(seed=42)          # fixed seed for reproducible builds
+    enc = StringEncryptor(seed=42)
     transformed_ast = enc.transform(source_code)
     output_source = enc.unparse(transformed_ast)
 
@@ -43,9 +40,11 @@ class StringEncryptor(ast.NodeTransformer):
     """
     AST NodeTransformer that encrypts string literals.
 
-    After transformation, the AST contains additional Assign nodes that
-    declare the key, data, and lambda decryptor for each encrypted string,
-    and the original Constant node is replaced with a Call to the lambda.
+    All helper statements (_dec_XXXX, _key_XXXX, _dat_XXXX) are collected
+    during the tree walk and injected as a single preamble at the top of
+    the module body — never inside function or class bodies.  This means
+    Nuitka sees only simple module-level assignments and no nested closures
+    inside functions, which eliminates the zig-backend segfault.
     """
 
     def __init__(
@@ -58,30 +57,20 @@ class StringEncryptor(ast.NodeTransformer):
         Args:
             seed: RNG seed for reproducible builds. None = random each run.
             preserve_docstrings: If True, module/class/function docstrings
-                are left as plain strings (safe, conventional).
+                are left as plain strings.
             min_length: Strings shorter than this are left unencrypted.
-                Single chars and very short strings are not worth the overhead.
         """
         self._rng = random.Random(seed)
         self._preserve_docstrings = preserve_docstrings
         self._min_length = min_length
 
-        # Tracks generated names to guarantee uniqueness within a file.
         self._used_names: set[str] = set()
-
-        # Collected (name, assignment_nodes) pairs that must be prepended
-        # to the current statement list being processed.
-        # Each entry: (insert_before_index, [ast.Assign, ast.Assign, ast.Assign])
-        self._pending_stmts: list[tuple[int, list[ast.stmt]]] = []
-
-        # Set of node ids that are docstrings — populated before visiting.
         self._docstring_ids: set[int] = set()
 
-        # Flag: are we currently inside a JoinedStr (f-string)?
-        # Constants inside f-strings cannot be safely encrypted.
-        self._in_joinedstr: bool = False
+        # All helper stmts accumulated here during the full tree walk.
+        # Injected at module level by visit_Module after visiting children.
+        self._module_helpers: list[ast.stmt] = []
 
-        # Public counter for the log panel
         self.count: int = 0
 
     # ------------------------------------------------------------------
@@ -89,12 +78,7 @@ class StringEncryptor(ast.NodeTransformer):
     # ------------------------------------------------------------------
 
     def transform(self, source: str) -> ast.Module:
-        """
-        Parse *source*, encrypt strings, return the modified AST.
-
-        The returned AST has correct lineno/col_offset on all nodes
-        (ast.fix_missing_locations is called automatically).
-        """
+        """Parse *source*, encrypt strings, return the modified AST."""
         tree = ast.parse(source)
         if self._preserve_docstrings:
             self._collect_docstrings(tree)
@@ -104,10 +88,7 @@ class StringEncryptor(ast.NodeTransformer):
 
     @staticmethod
     def unparse(tree: ast.AST) -> str:
-        """
-        Convert the modified AST back to source code.
-        Requires Python 3.9+ (ast.unparse).
-        """
+        """Convert the modified AST back to source code (Python 3.9+)."""
         return ast.unparse(tree)
 
     def transform_file(self, input_path: str, output_path: str) -> None:
@@ -157,10 +138,7 @@ class StringEncryptor(ast.NodeTransformer):
 
     @staticmethod
     def _encrypt(plaintext: str, key: int) -> bytes:
-        """
-        XOR-encrypt *plaintext* encoded as UTF-8 with single-byte *key*.
-        Key must be 1–254 (never 0, never 255 for safety).
-        """
+        """XOR-encrypt *plaintext* (UTF-8) with single-byte *key* (1-254)."""
         raw = plaintext.encode("utf-8")
         return bytes(b ^ key for b in raw)
 
@@ -170,7 +148,7 @@ class StringEncryptor(ast.NodeTransformer):
 
     def _build_decryptor_assign(self, dec_name: str) -> ast.Assign:
         """
-        Build:
+        Build module-level:
             _dec_XXXX = lambda k, d: bytes(a ^ b for a, b in zip(d, bytes([k]) * len(d))).decode('utf-8', errors='replace')
         """
         source = (
@@ -182,7 +160,7 @@ class StringEncryptor(ast.NodeTransformer):
         return ast.parse(source, mode="exec").body[0]  # type: ignore[return-value]
 
     def _build_key_assign(self, key_name: str, key: int) -> ast.Assign:
-        """Build: _key_XXXX = 0xKK"""
+        """Build module-level: _key_XXXX = 0xKK"""
         return ast.Assign(
             targets=[ast.Name(id=key_name, ctx=ast.Store())],
             value=ast.Constant(value=key),
@@ -191,7 +169,7 @@ class StringEncryptor(ast.NodeTransformer):
         )
 
     def _build_data_assign(self, dat_name: str, ciphertext: bytes) -> ast.Assign:
-        """Build: _dat_XXXX = b'...' (the encrypted bytes literal)"""
+        """Build module-level: _dat_XXXX = b'...'"""
         return ast.Assign(
             targets=[ast.Name(id=dat_name, ctx=ast.Store())],
             value=ast.Constant(value=ciphertext),
@@ -200,10 +178,7 @@ class StringEncryptor(ast.NodeTransformer):
         )
 
     def _build_call(self, dec_name: str, key_name: str, dat_name: str) -> ast.Call:
-        """
-        Build: _dec_XXXX(_key_XXXX, _dat_XXXX)
-        This replaces the original string Constant node.
-        """
+        """Build: _dec_XXXX(_key_XXXX, _dat_XXXX) — replaces the original string."""
         return ast.Call(
             func=ast.Name(id=dec_name, ctx=ast.Load()),
             args=[
@@ -214,69 +189,32 @@ class StringEncryptor(ast.NodeTransformer):
         )
 
     # ------------------------------------------------------------------
-    # Statement-list processor
-    # ------------------------------------------------------------------
-
-    def _process_stmts(self, stmts: list[ast.stmt]) -> list[ast.stmt]:
-        """
-        Visit each statement in a list.  Because each encrypted string
-        introduces three new assignment statements that must appear *before*
-        the statement containing the string, we do a two-pass approach:
-
-        1. Visit each stmt (which may register pending inserts via
-           _queue_insert).
-        2. After visiting, splice in the pending stmts at the correct
-           positions.
-        """
-        result: list[ast.stmt] = []
-        for stmt in stmts:
-            self._pending_stmts.clear()
-            new_stmt = self.visit(stmt)
-            for _idx, helpers in self._pending_stmts:
-                result.extend(helpers)
-            if new_stmt is not None:
-                result.append(new_stmt)
-        return result
-
-    # ------------------------------------------------------------------
     # NodeTransformer overrides
     # ------------------------------------------------------------------
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
-        node.body = self._process_stmts(node.body)
-        return node
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
-        node.body = self._process_stmts(node.body)
-        return node
-
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
-        node.body = self._process_stmts(node.body)
+        """
+        Visit all children first (populates self._module_helpers),
+        then prepend the entire helper preamble to the module body.
+        """
+        self.generic_visit(node)
+        if self._module_helpers:
+            node.body = self._module_helpers + node.body
         return node
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
         """
-        Skip f-strings entirely.
-
-        F-string (JoinedStr) nodes mix Constant literal fragments with
-        arbitrary expression nodes (Call, Name, Attribute …).  Replacing
-        a Constant inside a JoinedStr with an ast.Call produces invalid
-        AST that ast.unparse cannot reconstruct.  We therefore return the
-        node unchanged — no child nodes are visited — so no Constants
-        inside f-strings are ever encrypted.
+        Skip f-strings entirely — their Constant sub-nodes are literal
+        fragments mixed with expressions; replacing them with Call nodes
+        produces invalid AST.
         """
         return node
 
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
         """
         Replace string constants with a decryptor call.
-        Skips:
-          - Non-string constants (int, float, bool, None, bytes, ...)
-          - Strings shorter than min_length
-          - Docstrings (if preserve_docstrings is True)
-          - Anything inside a JoinedStr (handled by visit_JoinedStr above)
+        Helper assignments are appended to self._module_helpers (hoisted
+        to module level) — NOT injected into the local statement list.
         """
         if not isinstance(node.value, str):
             return node
@@ -285,25 +223,18 @@ class StringEncryptor(ast.NodeTransformer):
         if len(node.value) < self._min_length:
             return node
 
-        # Generate unique names
         tag = self._unique_tag()
         dec_name, key_name, dat_name = self._make_names(tag)
 
-        # Pick a random non-zero, non-255 key
         key = self._rng.randint(1, 254)
         ciphertext = self._encrypt(node.value, key)
 
-        # Queue the three helper assignments to be inserted before the
-        # current statement in the enclosing statement list.
-        helpers = [
-            self._build_decryptor_assign(dec_name),
-            self._build_key_assign(key_name, key),
-            self._build_data_assign(dat_name, ciphertext),
-        ]
-        self._pending_stmts.append((0, helpers))
+        # Hoist helpers to module level — avoids nested closures in functions
+        self._module_helpers.append(self._build_decryptor_assign(dec_name))
+        self._module_helpers.append(self._build_key_assign(key_name, key))
+        self._module_helpers.append(self._build_data_assign(dat_name, ciphertext))
         self.count += 1
 
-        # Return the call node that replaces the original string
         return self._build_call(dec_name, key_name, dat_name)
 
 

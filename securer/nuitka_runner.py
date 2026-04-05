@@ -90,6 +90,7 @@ class NuitkaRunner:
         output_dir: str | Path,
         onefile: bool = True,
         windows_disable_console: bool = False,
+        tk_inter: bool = True,
         extra_args: Optional[list[str]] = None,
     ) -> Path:
         """
@@ -105,6 +106,10 @@ class NuitkaRunner:
             Pass ``--onefile`` to produce a single portable executable.
         windows_disable_console:
             Pass ``--windows-disable-console`` to suppress the console window.
+        tk_inter:
+            Pass ``--enable-plugin=tk-inter`` so Nuitka bundles TCL/TK DLLs.
+            Required for any app that imports tkinter / customtkinter.
+            Defaults to True — safe to leave on for non-Tkinter apps (no-op).
         extra_args:
             Any additional Nuitka CLI flags.
 
@@ -126,12 +131,14 @@ class NuitkaRunner:
             sys.executable, "-m", "nuitka",
             str(source_path),
             f"--output-dir={output_dir}",
-            "--assume-yes-for-downloads",  # auto-accept Nuitka dependency downloads
+            "--assume-yes-for-downloads",
         ]
         if onefile:
             cmd.append("--onefile")
         if windows_disable_console:
             cmd.append("--windows-disable-console")
+        if tk_inter:
+            cmd.append("--enable-plugin=tk-inter")
         if extra_args:
             cmd.extend(extra_args)
 
@@ -162,7 +169,6 @@ class NuitkaRunner:
         self._log("-" * 60)
         self._log("Nuitka compilation finished successfully.")
 
-        # Locate the produced binary
         exe = self._find_output(source_path.stem, output_dir)
         self._log(f"Output binary: {exe}")
         return exe
@@ -173,8 +179,6 @@ class NuitkaRunner:
 
     def _find_output(self, stem: str, output_dir: Path) -> Path:
         """Return the path of the compiled binary inside *output_dir*."""
-        # Nuitka --onefile on Windows → stem.exe at root of output_dir
-        # Nuitka --onefile on Linux/macOS → stem (no extension)
         candidates = [
             output_dir / f"{stem}.exe",
             output_dir / stem,
@@ -183,13 +187,11 @@ class NuitkaRunner:
             if c.exists():
                 return c
 
-        # Fallback: walk one level deep (Nuitka sometimes puts it in a subdir)
         for child in output_dir.rglob(f"{stem}*.exe"):
             return child
         for child in output_dir.rglob(stem):
             if child.is_file():
                 return child
 
-        # Return expected path even if not found yet (race condition guard)
         suffix = ".exe" if sys.platform == "win32" else ""
         return output_dir / f"{stem}{suffix}"
