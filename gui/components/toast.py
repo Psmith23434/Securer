@@ -48,6 +48,7 @@ class _Toast(ctk.CTkFrame):
 
     def __init__(self, parent: ctk.CTk, message: str, kind: Kind, index: int) -> None:
         color = KIND_COLORS[kind]
+        # width + height MUST be passed to __init__; CTk forbids them in .place()
         super().__init__(
             parent,
             width=TOAST_W,
@@ -56,9 +57,9 @@ class _Toast(ctk.CTkFrame):
             fg_color=color,
         )
         self._index = index
-        self._kind = kind          # store kind so fade never needs a reverse lookup
+        self._kind = kind
         self._alpha = 1.0
-        self._base_color = self._hex_to_rgb(color)   # cache original RGB once
+        self._base_color = self._hex_to_rgb(color)
 
         icon = KIND_ICONS[kind]
         ctk.CTkLabel(
@@ -78,7 +79,8 @@ class _Toast(ctk.CTkFrame):
         ph = parent.winfo_height() or 700
         x = pw - TOAST_W - MARGIN_R
         y = ph - MARGIN_B - TOAST_H - index * (TOAST_H + GAP)
-        self.place(x=x, y=y, width=TOAST_W, height=TOAST_H)
+        # Do NOT pass width/height here — CTk only accepts them in __init__
+        self.place(x=x, y=y)
 
     def reposition(self, index: int) -> None:
         self._index = index
@@ -91,7 +93,6 @@ class _Toast(ctk.CTkFrame):
         if remaining <= 0:
             self.destroy()
             return
-        # Darken by ratio using the cached base RGB — no reverse lookup needed
         ratio = remaining / FADE_STEPS
         r, g, b = self._base_color
         fade_color = self._rgb_to_hex(
