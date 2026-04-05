@@ -236,7 +236,6 @@ class PipelineView(ctk.CTkFrame):
         ).grid(row=1, column=0, sticky="w")
 
     def _build_file_row(self, row: int) -> None:
-        """Build drop zone + file entry + Browse button."""
         frame = ctk.CTkFrame(self, fg_color="transparent")
         frame.grid(row=row, column=0, sticky="ew", padx=20, pady=(8, 4))
         frame.grid_columnconfigure(0, weight=1)
@@ -246,7 +245,6 @@ class PipelineView(ctk.CTkFrame):
             font=("Segoe UI", 12, "bold"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-        # --- Drop zone (row 1, spans both columns) ---
         is_dark = ctk.get_appearance_mode() == "Dark"
         dz_idle = _DZ_IDLE_DARK if is_dark else _DZ_IDLE_LIGHT
 
@@ -277,21 +275,17 @@ class PipelineView(ctk.CTkFrame):
         )
         self._dz_label.grid(row=0, column=0)
 
-        # Register DnD events if available
         if _DND_AVAILABLE:
             self._drop_zone.drop_target_register(DND_FILES)  # type: ignore[arg-type]
             self._drop_zone.dnd_bind("<<DropEnter>>", self._on_drop_enter)
             self._drop_zone.dnd_bind("<<DropLeave>>", self._on_drop_leave)
             self._drop_zone.dnd_bind("<<Drop>>",      self._on_drop)
-            # Also bind label events so the whole zone is a target
             self._dz_label.drop_target_register(DND_FILES)  # type: ignore[arg-type]
             self._dz_label.dnd_bind("<<Drop>>", self._on_drop)
 
-        # Clicking the drop zone also opens Browse
         self._drop_zone.bind("<Button-1>", lambda _e: self._browse_file())
         self._dz_label.bind("<Button-1>",  lambda _e: self._browse_file())
 
-        # --- Entry + Browse (row 2) ---
         self._file_entry = ctk.CTkEntry(
             frame,
             placeholder_text="Path to your .py source file...",
@@ -388,41 +382,31 @@ class PipelineView(ctk.CTkFrame):
     # Drag-and-drop handlers
     # ------------------------------------------------------------------
 
-    def _on_drop_enter(self, event) -> None:  # type: ignore[override]
-        """Highlight the drop zone when a dragged file enters it."""
+    def _on_drop_enter(self, event) -> None:
         is_dark = ctk.get_appearance_mode() == "Dark"
         self._drop_zone.configure(fg_color=_DZ_HOVER_DARK if is_dark else _DZ_HOVER_LIGHT)
         self._dz_label.configure(text="\u2B07  Release to load file")
 
-    def _on_drop_leave(self, event) -> None:  # type: ignore[override]
-        """Reset drop zone when dragged file leaves."""
+    def _on_drop_leave(self, event) -> None:
         self._reset_drop_zone()
 
-    def _on_drop(self, event) -> None:  # type: ignore[override]
-        """Handle a file drop event — accept only .py files."""
+    def _on_drop(self, event) -> None:
         self._reset_drop_zone()
-
-        # tkinterdnd2 returns the path(s) in event.data, possibly wrapped in {}
         raw: str = event.data.strip()
-        # Strip surrounding braces added for paths with spaces
         if raw.startswith("{") and raw.endswith("}"):
             raw = raw[1:-1]
-        # Multiple files separated by spaces — take the first .py
         paths = raw.split()
         py_path: str | None = None
         for p in paths:
             if p.lower().endswith(".py"):
                 py_path = p
                 break
-
         if py_path is None:
             self._toast.show("Only .py files are accepted.", kind="warning")
             return
-
         if not Path(py_path).exists():
             self._toast.show("Dropped file not found.", kind="error")
             return
-
         self._set_file(py_path)
         self._toast.show(f"Loaded: {Path(py_path).name}", kind="success")
 
@@ -437,11 +421,9 @@ class PipelineView(ctk.CTkFrame):
         self._dz_label.configure(text=dnd_hint)
 
     def _set_file(self, path: str) -> None:
-        """Populate the file entry and state with *path*."""
         self._file_entry.delete(0, "end")
         self._file_entry.insert(0, path)
         self._state["last_input"] = path
-        # Update drop zone label to show the filename
         self._dz_label.configure(
             text=f"\u2714  {Path(path).name}",
             text_color=("#437a22", "#6daa45"),
@@ -491,12 +473,11 @@ class PipelineView(ctk.CTkFrame):
         self._run_btn.configure(state="disabled", text="\u23f3  Running...")
         self._running = True
         self._log.clear()
-        thread = threading.Thread(
+        threading.Thread(
             target=self._run_pipeline,
             args=(input_path,),
             daemon=True,
-        )
-        thread.start()
+        ).start()
 
     # ------------------------------------------------------------------
     # Pipeline execution (background thread)
@@ -521,7 +502,7 @@ class PipelineView(ctk.CTkFrame):
                 from securer.string_encryptor import StringEncryptor
                 enc = StringEncryptor(seed=seed)
                 tree = enc.transform(src)
-                log.log(f"  Encrypted {getattr(enc, 'count', '?')} string(s)", LogLevel.SUCCESS)
+                log.log(f"  Encrypted {enc.count} string(s)", LogLevel.SUCCESS)
                 last_module = enc
             else:
                 log.log("Stage 1a \u2014 skipped", LogLevel.INFO)
@@ -612,8 +593,11 @@ class PipelineView(ctk.CTkFrame):
             self.after(0, lambda p=out_path: self._prompt_nuitka(p))
 
         except Exception as exc:  # noqa: BLE001
-            log.log(f"ERROR: {exc}", LogLevel.ERROR)
-            self.after(0, lambda: self._toast.show(f"Error: {exc}", kind="error"))
+            import traceback
+            tb = traceback.format_exc()
+            log.log(tb, LogLevel.ERROR)
+            # Capture exc into default arg to avoid Python's except-scope cleanup
+            self.after(0, lambda e=exc: self._toast.show(f"Error: {e}", kind="error"))
 
         finally:
             self.after(
@@ -665,10 +649,11 @@ class PipelineView(ctk.CTkFrame):
             self.after(0, lambda: self._on_nuitka_success(exe_path))
         except NuitkaError as exc:
             log.log(f"Nuitka error: {exc}", LogLevel.ERROR)
-            self.after(0, lambda: self._toast.show("Nuitka failed \u2014 see log.", kind="error"))
+            # Capture exc into default arg to avoid Python's except-scope cleanup
+            self.after(0, lambda e=exc: self._toast.show(f"Nuitka failed: {e}", kind="error"))
         except Exception as exc:  # noqa: BLE001
             log.log(f"Unexpected error: {exc}", LogLevel.ERROR)
-            self.after(0, lambda: self._toast.show(f"Error: {exc}", kind="error"))
+            self.after(0, lambda e=exc: self._toast.show(f"Error: {e}", kind="error"))
 
     def _on_nuitka_success(self, exe_path: Path) -> None:
         self._log.log(f"\u2714 Binary ready: {exe_path}", LogLevel.SUCCESS)

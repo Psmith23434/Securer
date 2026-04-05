@@ -10,8 +10,13 @@ Design goals:
   - Each decryptor lambda has a unique generated name so no single grep
     pattern finds all of them.
   - The transformation is purely AST-based — no regex, no text munging.
-    This means it handles multi-line strings, f-strings (skipped safely),
-    bytes literals (skipped), and docstrings correctly.
+    This means it handles multi-line strings, bytes literals (skipped),
+    and docstrings correctly.
+  - F-strings (JoinedStr nodes) are skipped entirely: their Constant
+    sub-nodes are literal fragments mixed with arbitrary expressions and
+    cannot be replaced with Call nodes without producing invalid AST.
+    The runtime value of an f-string is never a plain string constant
+    anyway, so skipping costs nothing meaningful in obfuscation coverage.
   - Docstrings on modules, classes, and functions are preserved as-is
     (they are safe to leave; removing them breaks help() and __doc__).
     Pass preserve_docstrings=False to encrypt those too.
@@ -31,8 +36,6 @@ maximum variation between releases.
 
 import ast
 import random
-import secrets
-import textwrap
 from typing import Optional
 
 
@@ -73,6 +76,13 @@ class StringEncryptor(ast.NodeTransformer):
 
         # Set of node ids that are docstrings — populated before visiting.
         self._docstring_ids: set[int] = set()
+
+        # Flag: are we currently inside a JoinedStr (f-string)?
+        # Constants inside f-strings cannot be safely encrypted.
+        self._in_joinedstr: bool = False
+
+        # Public counter for the log panel
+        self.count: int = 0
 
     # ------------------------------------------------------------------
     # Public interface
@@ -163,7 +173,6 @@ class StringEncryptor(ast.NodeTransformer):
         Build:
             _dec_XXXX = lambda k, d: bytes(a ^ b for a, b in zip(d, bytes([k]) * len(d))).decode('utf-8', errors='replace')
         """
-        # lambda k, d: bytes(a ^ b for a, b in zip(d, bytes([k]) * len(d))).decode('utf-8', errors='replace')
         source = (
             f"{dec_name} = "
             "lambda k, d: "
@@ -223,7 +232,6 @@ class StringEncryptor(ast.NodeTransformer):
         for stmt in stmts:
             self._pending_stmts.clear()
             new_stmt = self.visit(stmt)
-            # _pending_stmts holds the helper assignments to insert before
             for _idx, helpers in self._pending_stmts:
                 result.extend(helpers)
             if new_stmt is not None:
@@ -248,6 +256,19 @@ class StringEncryptor(ast.NodeTransformer):
         node.body = self._process_stmts(node.body)
         return node
 
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+        """
+        Skip f-strings entirely.
+
+        F-string (JoinedStr) nodes mix Constant literal fragments with
+        arbitrary expression nodes (Call, Name, Attribute …).  Replacing
+        a Constant inside a JoinedStr with an ast.Call produces invalid
+        AST that ast.unparse cannot reconstruct.  We therefore return the
+        node unchanged — no child nodes are visited — so no Constants
+        inside f-strings are ever encrypted.
+        """
+        return node
+
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
         """
         Replace string constants with a decryptor call.
@@ -255,7 +276,7 @@ class StringEncryptor(ast.NodeTransformer):
           - Non-string constants (int, float, bool, None, bytes, ...)
           - Strings shorter than min_length
           - Docstrings (if preserve_docstrings is True)
-          - f-string components (they appear as JoinedStr, not Constant)
+          - Anything inside a JoinedStr (handled by visit_JoinedStr above)
         """
         if not isinstance(node.value, str):
             return node
@@ -280,6 +301,7 @@ class StringEncryptor(ast.NodeTransformer):
             self._build_data_assign(dat_name, ciphertext),
         ]
         self._pending_stmts.append((0, helpers))
+        self.count += 1
 
         # Return the call node that replaces the original string
         return self._build_call(dec_name, key_name, dat_name)
