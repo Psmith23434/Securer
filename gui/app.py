@@ -9,8 +9,8 @@ Responsibilities:
 
 Drag-and-drop:
   tkinterdnd2 cannot safely use multiple inheritance with ctk.CTk because
-  both subclass tk.Tk and the MRO breaks CTk’s scaling init.
-  Instead we call TkinterDnD’s internal _require() on the already-constructed
+  both subclass tk.Tk and the MRO breaks CTk's scaling init.
+  Instead we call TkinterDnD's internal _require() on the already-constructed
   CTk instance — this is the same thing TkinterDnD.Tk.__init__ does, but
   without touching the class hierarchy.
   Falls back silently to plain ctk.CTk when tkinterdnd2 is absent.
@@ -39,7 +39,11 @@ DEFAULT_STATE: dict = {
         "1c_flow":       True,
         "1d_predicates": True,
         "1e_deadcode":   True,
-        "3_shield":      False,   # opt-in: needs hash embedding
+        # Stage 3 is split into two independent sub-stages:
+        #   3a — anti-debug check  (safe on all PCs, ON by default)
+        #   3b — integrity hash    (can cause false-positives with AV, OFF by default)
+        "3a_antidebug":  True,
+        "3b_integrity":  False,
     },
     "theme": "dark",
     "last_input": "",

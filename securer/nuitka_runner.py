@@ -5,6 +5,16 @@ Runs Nuitka in a subprocess and streams stdout/stderr line-by-line
 to a caller-supplied log callback.  Designed to be called from a
 background thread so the GUI stays responsive.
 
+Compilation mode:
+  standalone=True  (default) — produces a self-contained folder (app.dist/).
+                               Nothing is extracted to a temp directory at
+                               runtime, which avoids antivirus heuristics and
+                               temp-file clutter on the user's machine.
+  standalone=False           — produces a single .exe (--onefile) that
+                               self-extracts to %APPDATA%\Local\Temp on every
+                               launch.  Use only when you need a single file
+                               and have verified your AV allows it.
+
 Usage::
 
     from securer.nuitka_runner import NuitkaRunner, NuitkaError
@@ -17,7 +27,7 @@ Usage::
     exe_path = runner.compile(
         source_path="app_obf.py",
         output_dir="dist/",
-        onefile=True,
+        standalone=True,              # recommended: no temp extraction
         windows_disable_console=False,
     )
     print(f"Built: {exe_path}")
@@ -88,7 +98,7 @@ class NuitkaRunner:
         self,
         source_path: str | Path,
         output_dir: str | Path,
-        onefile: bool = True,
+        standalone: bool = True,
         windows_disable_console: bool = False,
         tk_inter: bool = True,
         extra_args: Optional[list[str]] = None,
@@ -101,9 +111,12 @@ class NuitkaRunner:
         source_path:
             Path to the (obfuscated) `.py` file to compile.
         output_dir:
-            Directory where Nuitka places the `.exe` / dist output.
-        onefile:
-            Pass ``--onefile`` to produce a single portable executable.
+            Directory where Nuitka places the dist output.
+        standalone:
+            If True (default), pass ``--standalone`` — produces a folder with
+            no runtime temp extraction.  Recommended for distribution.
+            If False, pass ``--onefile`` — single .exe but self-extracts to
+            %APPDATA%\Local\Temp on every launch (can trigger AV heuristics).
         windows_disable_console:
             Pass ``--windows-disable-console`` to suppress the console window.
         tk_inter:
@@ -133,8 +146,12 @@ class NuitkaRunner:
             f"--output-dir={output_dir}",
             "--assume-yes-for-downloads",
         ]
-        if onefile:
+
+        if standalone:
+            cmd.append("--standalone")
+        else:
             cmd.append("--onefile")
+
         if windows_disable_console:
             cmd.append("--windows-disable-console")
         if tk_inter:
@@ -169,7 +186,7 @@ class NuitkaRunner:
         self._log("-" * 60)
         self._log("Nuitka compilation finished successfully.")
 
-        exe = self._find_output(source_path.stem, output_dir)
+        exe = self._find_output(source_path.stem, output_dir, standalone=standalone)
         self._log(f"Output binary: {exe}")
         return exe
 
@@ -177,21 +194,38 @@ class NuitkaRunner:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _find_output(self, stem: str, output_dir: Path) -> Path:
-        """Return the path of the compiled binary inside *output_dir*."""
-        candidates = [
-            output_dir / f"{stem}.exe",
-            output_dir / stem,
-        ]
-        for c in candidates:
-            if c.exists():
-                return c
+    def _find_output(self, stem: str, output_dir: Path, standalone: bool = True) -> Path:
+        """
+        Return the path of the compiled binary inside *output_dir*.
 
-        for child in output_dir.rglob(f"{stem}*.exe"):
-            return child
-        for child in output_dir.rglob(stem):
-            if child.is_file():
-                return child
-
+        --standalone produces:  output_dir/<stem>.dist/<stem>.exe
+        --onefile produces:     output_dir/<stem>.exe
+        """
         suffix = ".exe" if sys.platform == "win32" else ""
+
+        if standalone:
+            # Nuitka standalone output lives in a <stem>.dist/ subfolder
+            dist_dir = output_dir / f"{stem}.dist"
+            candidate = dist_dir / f"{stem}{suffix}"
+            if candidate.exists():
+                return candidate
+            # Fallback: search the dist dir recursively
+            if dist_dir.exists():
+                for child in dist_dir.rglob(f"{stem}*{suffix}"):
+                    if child.is_file():
+                        return child
+            # Last resort: search the whole output dir
+            for child in output_dir.rglob(f"{stem}*{suffix}"):
+                if child.is_file():
+                    return child
+        else:
+            # --onefile: single exe directly in output_dir
+            candidate = output_dir / f"{stem}{suffix}"
+            if candidate.exists():
+                return candidate
+            for child in output_dir.rglob(f"{stem}*{suffix}"):
+                if child.is_file():
+                    return child
+
+        # Absolute fallback
         return output_dir / f"{stem}{suffix}"
