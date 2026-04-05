@@ -26,7 +26,7 @@ Your source .py
               │  app.exe
               ▼
 ┌─────────────────────────────┐
-│   STAGE 3: Runtime Shield   │  ← Step 6 (next)
+│   STAGE 3: Runtime Shield   │  ← Step 6 ✓
 │  Anti-debug + tamper check  │
 └─────────────────────────────┘
 ```
@@ -38,7 +38,7 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-## Full Pipeline Usage (Stages 1a–1e)
+## Full Pipeline Usage (Stages 1a–1e + Shield)
 
 ```python
 from securer.string_encryptor import StringEncryptor
@@ -46,6 +46,7 @@ from securer.name_mangler import NameMangler
 from securer.flow_flattener import FlowFlattener
 from securer.opaque_predicates import OpaquePredicates
 from securer.dead_code_injector import DeadCodeInjector
+from securer.runtime_shield import RuntimeShield
 
 src = open('app.py').read()
 enc = StringEncryptor(seed=42)    # Stage 1a: encrypt strings
@@ -64,6 +65,10 @@ open('app_obf.py', 'w').write(di.unparse(tree))
 # Optional: inspect what changed
 mg.print_table()
 print(di.stats)
+
+# Stage 3: embed in your entry point after Nuitka build
+# RuntimeShield.EXPECTED_HASH = "<sha256 from compute_current_hash()>"
+# RuntimeShield.guard()
 ```
 
 ## Stages
@@ -131,10 +136,63 @@ Realistic-looking but never-executed code paths injected at three sites:
 Eight distinct snippet types are used so repeated patterns are minimised.
 All injected names follow the same `_X{hex}` style as Stage 1b mangling.
 
-### Stage 3 — Runtime Shield (Step 6 — next)
+### Stage 3 — Runtime Shield ✓
 
-`IsDebuggerPresent()` check + SHA-256 binary integrity verification.
-This stage wraps the compiled `.exe` output, not the Python source.
+Two independent runtime defences applied to the compiled `.exe`:
+
+1. **Anti-debug guard**
+   - Windows: `IsDebuggerPresent()` + `NtQueryInformationProcess` (catches
+     remote debuggers and tools like x64dbg, WinDbg, OllyDbg)
+   - Cross-platform fallback: timing-delta heuristic (≥50 ms gap between two
+     `perf_counter` calls indicates single-stepping under a debugger)
+   - Terminates via `os._exit(1)` — uncatchable from Python exception handlers
+
+2. **Binary self-integrity check**
+   - SHA-256 of the running `.exe` is compared against a hash embedded at
+     build time via `RuntimeShield.EXPECTED_HASH`
+   - Constant-time comparison (`hmac.compare_digest`) prevents timing
+     side-channel attacks on the hash comparison itself
+   - Any byte-patch, loader injection, or resource modification causes
+     immediate `os._exit(1)`
+
+**Build workflow:**
+```python
+# 1. Build your app.exe with Nuitka (no EXPECTED_HASH yet)
+# 2. Run once to get the clean hash:
+from securer.runtime_shield import RuntimeShield
+print(RuntimeShield.compute_current_hash())   # → "a3f1...de09"
+
+# 3. Set the hash, rebuild → now the exe verifies itself on every launch
+RuntimeShield.EXPECTED_HASH = "a3f1...de09"
+RuntimeShield.guard()   # call at top of main.py
+```
+
+## Step 7 — GUI (next)
+
+Build a full CustomTkinter desktop GUI for Securer:
+
+- **Sidebar navigation**: Pipeline, Settings, About
+- **Pipeline view**: drag-and-drop .py file input, toggle for each stage
+  (1a–1e + Shield), live log panel showing obfuscation progress, output
+  file path selector, Run button
+- **Settings view**: seed input, output directory, theme toggle (dark/light)
+- **About view**: version, pipeline summary, links
+
+Files to create:
+
+```
+gui/
+├── app.py                   ← CustomTkinter root window + theme init
+├── views/
+│   ├── pipeline_view.py     ← main obfuscation UI
+│   ├── settings_view.py     ← seed, output dir, theme
+│   └── about_view.py        ← version + info
+└── components/
+    ├── sidebar.py           ← animated collapsible sidebar
+    ├── log_panel.py         ← scrollable real-time log output
+    └── toast.py             ← non-blocking toast notifications
+main.py                      ← GUI entry point
+```
 
 ## Project Structure
 
@@ -147,8 +205,8 @@ Securer/
 │   ├── flow_flattener.py       # Stage 1c ✓
 │   ├── opaque_predicates.py    # Stage 1d ✓
 │   ├── dead_code_injector.py   # Stage 1e ✓
-│   └── runtime_shield.py       # Step 6 — next
-├── gui/                        # Step 7 — after runtime shield
+│   └── runtime_shield.py       # Stage 3 ✓
+├── gui/                        # Step 7 — next
 │   ├── app.py
 │   ├── views/
 │   │   ├── pipeline_view.py
@@ -165,6 +223,7 @@ Securer/
 │   ├── test_flow_flattener.py
 │   ├── test_opaque_predicates.py
 │   ├── test_dead_code_injector.py
+│   ├── test_runtime_shield.py  # ✓
 │   └── fixtures/
 │       └── sample_app.py
 ├── build/
