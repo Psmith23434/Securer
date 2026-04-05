@@ -6,6 +6,11 @@ Responsibilities:
   - Build the two-column layout: sidebar (fixed) + content area (flex)
   - Own the in-memory app state dict shared across views
   - Route sidebar nav events to view switches
+
+Drag-and-drop:
+  When tkinterdnd2 is installed, SecurerApp inherits from TkinterDnD.Tk
+  (in addition to ctk.CTk) so the DnD message loop is registered at the
+  Tk root level.  Falls back to plain ctk.CTk when the package is absent.
 """
 from __future__ import annotations
 
@@ -18,18 +23,28 @@ from gui.views.settings_view import SettingsView
 from gui.views.about_view import AboutView
 
 # ---------------------------------------------------------------------------
+# Optional TkinterDnD root mixin
+# ---------------------------------------------------------------------------
+try:
+    from tkinterdnd2 import TkinterDnD  # type: ignore
+    _DnDBase = TkinterDnD.Tk            # registers the DnD message loop
+except ImportError:
+    _DnDBase = None
+
+
+# ---------------------------------------------------------------------------
 # Default app state — shared across all views via reference
 # ---------------------------------------------------------------------------
 DEFAULT_STATE: dict = {
     "seed": 42,
     "output_dir": "",
     "stages": {
-        "1a_strings":   True,
-        "1b_names":     True,
-        "1c_flow":      True,
-        "1d_predicates":True,
-        "1e_deadcode":  True,
-        "3_shield":     False,   # opt-in: needs hash embedding
+        "1a_strings":    True,
+        "1b_names":      True,
+        "1c_flow":       True,
+        "1d_predicates": True,
+        "1e_deadcode":   True,
+        "3_shield":      False,   # opt-in: needs hash embedding
     },
     "theme": "dark",
     "last_input": "",
@@ -37,7 +52,24 @@ DEFAULT_STATE: dict = {
 }
 
 
-class SecurerApp(ctk.CTk):
+# ---------------------------------------------------------------------------
+# Build the correct base class at import time
+# ---------------------------------------------------------------------------
+if _DnDBase is not None:
+    class _AppBase(_DnDBase, ctk.CTk):  # type: ignore[misc]
+        """Mixin: TkinterDnD.Tk (DnD loop) + ctk.CTk (theme/widgets)."""
+        def __init__(self) -> None:
+            # CTk sets up its internals via super(); TkinterDnD.Tk registers
+            # the DnD protocol on the same Tk instance.
+            super().__init__()
+else:
+    class _AppBase(ctk.CTk):  # type: ignore[misc]
+        """Fallback: plain CTk root (no drag-and-drop)."""
+        def __init__(self) -> None:
+            super().__init__()
+
+
+class SecurerApp(_AppBase):
     """Main application window."""
 
     WIDTH  = 1080
@@ -46,7 +78,7 @@ class SecurerApp(ctk.CTk):
     MIN_H  = 560
 
     def __init__(self) -> None:
-        # --- theme must be set before super().__init__ ---
+        # Theme must be set before super().__init__ touches Tk internals
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         super().__init__()
@@ -132,7 +164,6 @@ class SecurerApp(ctk.CTk):
 
     def _set_window_icon(self) -> None:
         try:
-            from pathlib import Path
             ico = Path(__file__).parent.parent / "assets" / "icon.ico"
             if ico.exists():
                 self.iconbitmap(str(ico))
