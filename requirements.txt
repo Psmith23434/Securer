@@ -1,14 +1,10 @@
-# Core pipeline — no external deps (uses stdlib ast)
-# Test runner
-pytest>=7.4.0
-pytest-cov>=4.1.0
+# Runtime — stdlib only (ast, hashlib, random, ctypes)
+# No third-party runtime dependencies.
 
-# For final build stage (install separately when building)
+# Development / testing
+pytest>=8.0
+
+# Final compilation (install separately — not a pip package on all systems)
 # nuitka>=2.0
-# Cython>=3.0
-
-# For snippet_tool OCR features (app-level, not obfuscator)
-# pytesseract>=0.3.10
-# Pillow>=10.0
-# easyocr>=1.7
-# customtkinter>=5.2
+# Requires MSVC Build Tools on Windows:
+#   https://visualstudio.microsoft.com/visual-cpp-build-tools/

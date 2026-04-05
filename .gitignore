@@ -10,38 +10,27 @@ dist/
 build/
 .eggs/
 
-# Nuitka output
-*.dist/
-*.build/
-*.onefile-build/
-*.exe
-*.dll
-
-# Cython
-*.c
-*.html
-
 # Virtual environments
 .venv/
 venv/
 env/
 
+# Nuitka build artifacts
+*.build/
+*.dist/
+*.onefile-build/
+app_obf.py
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Obfuscator working files
-_obfuscated/
-_mangled/
-*.obf.py
-
-# Test coverage
-.coverage
-htmlcov/
-.pytest_cache/
