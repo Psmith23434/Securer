@@ -21,7 +21,7 @@ NAV_ITEMS = [
 ]
 
 COLOR_ACTIVE   = ("#1f538d", "#1f6aa5")   # CTk blue tones
-COLOR_INACTIVE = ("transparent", "transparent")
+COLOR_INACTIVE = "transparent"             # must be a plain string, not a tuple
 TEXT_ACTIVE    = ("#ffffff", "#ffffff")
 TEXT_INACTIVE  = ("#555555", "#aaaaaa")
 
