@@ -9,8 +9,8 @@ Responsibilities:
 
 Drag-and-drop:
   tkinterdnd2 cannot safely use multiple inheritance with ctk.CTk because
-  both subclass tk.Tk and the MRO breaks CTk's scaling init.
-  Instead we call TkinterDnD's internal _require() on the already-constructed
+  both subclass tk.Tk and the MRO breaks CTk’s scaling init.
+  Instead we call TkinterDnD’s internal _require() on the already-constructed
   CTk instance — this is the same thing TkinterDnD.Tk.__init__ does, but
   without touching the class hierarchy.
   Falls back silently to plain ctk.CTk when tkinterdnd2 is absent.
@@ -80,9 +80,10 @@ class SecurerApp(ctk.CTk):
         self.minsize(self.MIN_W, self.MIN_H)
         self._set_window_icon()
 
-        # Shared mutable state (passed by reference to every view)
-        self.state: dict = dict(DEFAULT_STATE)
-        self.state["stages"] = dict(DEFAULT_STATE["stages"])
+        # Shared mutable state (passed by reference to every view).
+        # NOTE: named app_state (not state) to avoid shadowing tk.Tk.state()
+        self.app_state: dict = dict(DEFAULT_STATE)
+        self.app_state["stages"] = dict(DEFAULT_STATE["stages"])
 
         # Toast manager (overlay layer)
         self.toast = ToastManager(self)
@@ -116,12 +117,12 @@ class SecurerApp(ctk.CTk):
         self._views: dict[str, ctk.CTkFrame] = {
             "pipeline": PipelineView(
                 self.content,
-                state=self.state,
+                state=self.app_state,
                 toast=self.toast,
             ),
             "settings": SettingsView(
                 self.content,
-                state=self.state,
+                state=self.app_state,
                 on_theme_change=self._apply_theme,
             ),
             "about": AboutView(self.content),
@@ -147,7 +148,7 @@ class SecurerApp(ctk.CTk):
     # ------------------------------------------------------------------
 
     def _apply_theme(self, theme: str) -> None:
-        self.state["theme"] = theme
+        self.app_state["theme"] = theme
         ctk.set_appearance_mode(theme)
 
     # ------------------------------------------------------------------
