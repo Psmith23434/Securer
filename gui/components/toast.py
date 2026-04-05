@@ -56,7 +56,9 @@ class _Toast(ctk.CTkFrame):
             fg_color=color,
         )
         self._index = index
+        self._kind = kind          # store kind so fade never needs a reverse lookup
         self._alpha = 1.0
+        self._base_color = self._hex_to_rgb(color)   # cache original RGB once
 
         icon = KIND_ICONS[kind]
         ctk.CTkLabel(
@@ -89,23 +91,17 @@ class _Toast(ctk.CTkFrame):
         if remaining <= 0:
             self.destroy()
             return
-        # CTk doesn't support per-widget alpha; simulate by darkening bg
+        # Darken by ratio using the cached base RGB — no reverse lookup needed
         ratio = remaining / FADE_STEPS
-        try:
-            r, g, b = self._hex_to_rgb(KIND_COLORS[next(
-                k for k, c in KIND_COLORS.items()
-                if c == self.cget("fg_color")
-            )])
-        except (StopIteration, Exception):
-            self.destroy()
-            return
+        r, g, b = self._base_color
         fade_color = self._rgb_to_hex(
             int(r * ratio), int(g * ratio), int(b * ratio)
         )
         try:
             self.configure(fg_color=fade_color)
         except Exception:
-            pass
+            self.destroy()
+            return
         self.after(FADE_DELAY, lambda: self._fade_step(remaining - 1))
 
     @staticmethod
